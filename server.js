@@ -256,17 +256,17 @@ app.get('/script', (req, res) => {
     const result = validateKey(req.query.key);
     if (!result.valid) return res.status(403).json({ valid: false, reason: result.reason });
 
-    // Fingerprint check
+    // Fingerprint — required. Reject requests without fp so users cannot
+    // bypass device-lock by removing the fingerprint from the loader.
     const fp = req.query.fp;
-    if (fp) {
-        const keys = loadKeys();
-        const entry = keys[result.key];
-        if (!entry.fingerprint) {
-            entry.fingerprint = fp;
-            saveKeys(keys);
-        } else if (entry.fingerprint !== fp) {
-            return res.status(403).json({ valid: false, reason: 'Key is already in use on another device. Contact support to reset.' });
-        }
+    if (!fp) return res.status(403).json({ valid: false, reason: 'Missing device fingerprint. Use the official loader.' });
+    const keys = loadKeys();
+    const entry = keys[result.key];
+    if (!entry.fingerprint) {
+        entry.fingerprint = fp;
+        saveKeys(keys);
+    } else if (entry.fingerprint !== fp) {
+        return res.status(403).json({ valid: false, reason: 'Key is already in use on another device. Contact support to reset.' });
     }
 
     // Tier routing — advanced keys get script-advanced.js, basic get script.js
@@ -292,7 +292,8 @@ app.get('/check', (req, res) => {
     const result = validateKey(req.query.key);
     if (!result.valid) return res.json({ valid: false, reason: result.reason });
     const fp = req.query.fp;
-    if (fp && result.entry.fingerprint && result.entry.fingerprint !== fp)
+    if (!fp) return res.json({ valid: false, reason: 'Missing device fingerprint. Use the official loader.' });
+    if (result.entry.fingerprint && result.entry.fingerprint !== fp)
         return res.json({ valid: false, reason: 'Key is already in use on another device.' });
     return res.json({
         valid: true,
