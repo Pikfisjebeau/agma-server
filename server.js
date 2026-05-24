@@ -1,8 +1,8 @@
 const express = require('express');
-const cors    = require('cors');
-const crypto  = require('crypto');
-const fs      = require('fs');
-const path    = require('path');
+const cors = require('cors');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -10,8 +10,9 @@ app.use(cors());
 app.use(express.text({ limit: '10mb', type: '*/*' }));
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'changeme123';
-const KEYS_FILE    = path.join(__dirname, 'keys.json');
-const SCRIPT_FILE  = path.join(__dirname, 'script.js');
+const KEYS_FILE = path.join(__dirname, 'keys.json');
+const SCRIPT_FILE = path.join(__dirname, 'script.js');
+const SCRIPT_ADV_FILE = path.join(__dirname, 'script-advanced.js');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function loadKeys() {
@@ -44,91 +45,69 @@ function adminCheck(req, res) {
     return true;
 }
 function validateKey(raw) {
-    const key   = (raw || '').trim().toUpperCase();
-    const keys  = loadKeys();
+    const key = (raw || '').trim().toUpperCase();
+    const keys = loadKeys();
     const entry = keys[key];
     if (!entry) return { valid: false, reason: 'Invalid key' };
     const timeLeft = entry.expires - Date.now();
     if (timeLeft <= 0) return { valid: false, reason: 'Key expired' };
     return { valid: true, key, timeLeft, entry };
 }
-// ── Code morphing — every user gets a unique copy ─────────────────────────────
-function rndHex(n) {
-    return crypto.randomBytes(n).toString('hex');
-}
+function rndHex(n) { return crypto.randomBytes(n).toString('hex'); }
 function morphScript(code) {
-    // Add a unique ID comment at the top
     const uid = rndHex(8).toUpperCase();
-    const ts  = Date.now();
-
-    // Inject random fake variable declarations at random positions
-    const fakeVars = Array.from({length: 8}, () =>
-        `var _${rndHex(4)} = ${Math.floor(Math.random()*9999)};`
+    const ts = Date.now();
+    const fakeVars = Array.from({ length: 8 }, () =>
+        `var _${rndHex(4)} = ${Math.floor(Math.random() * 9999)};`
     ).join(' ');
-
-    // Inject random dead comments throughout
-    const comments = Array.from({length: 5}, () =>
-        `/* ${rndHex(6)} */`
-    );
-
+    const comments = Array.from({ length: 5 }, () => `/* ${rndHex(6)} */`);
     let morphed = `// uid:${uid} ts:${ts}\n`;
     morphed += `(function(){${fakeVars}})();\n`;
-
-    // Sprinkle comments into the code at random line positions
     const lines = code.split('\n');
     let ci = 0;
     const result = lines.map((line, i) => {
-        if (ci < comments.length && i > 0 && i % Math.floor(lines.length / comments.length) === 0) {
+        if (ci < comments.length && i > 0 && i % Math.floor(lines.length / comments.length) === 0)
             return comments[ci++] + '\n' + line;
-        }
         return line;
     });
-
     morphed += result.join('\n');
     return morphed;
 }
 
-
-
-// ── AES-256-CBC encryption — keyed to user's fingerprint ─────────────────────
-// Key = SHA256(fingerprint). Without the fingerprint the cached blob is garbage.
-function encryptScript(code, fingerprint) {
-    const key = crypto.createHash('sha256').update(fingerprint).digest(); // 32 bytes
-    const iv  = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-    let encrypted = cipher.update(code, 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-    return {
-        iv:   iv.toString('base64'),
-        data: encrypted
-    };
-}
-
 // ── Admin Dashboard ───────────────────────────────────────────────────────────
 app.get('/admin', (req, res) => {
-    const secret = req.query.secret;
-    if (secret !== ADMIN_SECRET) {
-        return res.status(403).send('<h1>Forbidden</h1>');
-    }
+    if (req.query.secret !== ADMIN_SECRET) return res.status(403).send('<h1>Forbidden</h1>');
     const keys = loadKeys();
-    const now  = Date.now();
-    // Escape HTML to prevent XSS in admin dashboard
-    function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-    const rows = Object.entries(keys).map(([key, d]) => {
-        const tl     = d.expires - now;
+    const now = Date.now();
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+    const totalKeys = Object.keys(keys).length;
+    const activeBasic = Object.values(keys).filter(d => d.expires > now && (d.tier || 'basic') === 'basic').length;
+    const activeAdv = Object.values(keys).filter(d => d.expires > now && d.tier === 'advanced').length;
+    const expiredKeys = Object.values(keys).filter(d => d.expires <= now).length;
+
+    const rows = Object.entries(keys).sort((a, b) => b[1].expires - a[1].expires).map(([key, d]) => {
+        const tl = d.expires - now;
         const active = tl > 0;
-        const fp     = d.fingerprint ? `<span style="color:#7fc7ff;font-size:11px">${d.fingerprint.slice(0,16)}...</span>` : '<span style="color:#555">none</span>';
+        const tier = d.tier || 'basic';
+        const tierBadge = tier === 'advanced'
+            ? `<span style="background:#3a1a5a;color:#c07fff;border:1px solid #6a2aaa;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700">ADVANCED</span>`
+            : `<span style="background:#1a2a3a;color:#7fc7ff;border:1px solid #1a4a6a;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700">BASIC</span>`;
+        const fp = d.fingerprint
+            ? `<span style="color:#7fc7ff;font-size:11px">${esc(d.fingerprint.slice(0, 12))}…</span>`
+            : '<span style="color:#444">none</span>';
         const expDate = new Date(d.expires).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
         return `<tr style="border-bottom:1px solid #1a2a3a">
-            <td style="padding:10px;font-family:monospace;color:#39ff5a">${esc(key)}</td>
+            <td style="padding:10px;font-family:monospace;color:#39ff5a;font-size:13px">${esc(key)}</td>
             <td style="padding:10px;color:#aaa">${esc(d.note || '-')}</td>
+            <td style="padding:10px">${tierBadge}</td>
             <td style="padding:10px;color:${active ? '#7fff8c' : '#ff6060'}">${active ? formatTimeLeft(tl) : 'EXPIRED'}</td>
-            <td style="padding:10px;color:#7fc7ff;font-size:13px">${expDate}</td>
+            <td style="padding:10px;color:#7fc7ff;font-size:12px">${expDate}</td>
             <td style="padding:10px">${fp}</td>
-            <td style="padding:10px">
-                <button onclick="resetFP('${key}')" style="background:#1a3a5a;color:#7fc7ff;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;margin-right:5px">Reset FP</button>
-                <button onclick="extendKey('${key}')" style="background:#1a5a2a;color:#7fff8c;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;margin-right:5px">+30d</button>
-                <button onclick="deleteKey('${key}')" style="background:#5a1a1a;color:#ff6060;border:none;padding:5px 10px;border-radius:5px;cursor:pointer">Delete</button>
+            <td style="padding:10px;white-space:nowrap">
+                <button onclick="resetFP('${esc(key)}')" style="background:#1a3a5a;color:#7fc7ff;border:none;padding:5px 8px;border-radius:5px;cursor:pointer;margin-right:4px;font-size:12px">Reset FP</button>
+                <button onclick="extendKey('${esc(key)}',30)" style="background:#1a3a1a;color:#7fff8c;border:none;padding:5px 8px;border-radius:5px;cursor:pointer;margin-right:4px;font-size:12px">+30d</button>
+                <button onclick="deleteKey('${esc(key)}')" style="background:#5a1a1a;color:#ff6060;border:none;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:12px">Delete</button>
             </td>
         </tr>`;
     }).join('');
@@ -136,202 +115,246 @@ app.get('/admin', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html>
 <head>
-    <title>Agma Suite — Admin</title>
-    <meta charset="utf-8">
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #060c14; color: #cde; font-family: sans-serif; padding: 30px; }
-        h1 { color: #39ff5a; letter-spacing: 2px; margin-bottom: 6px; }
-        .sub { color: #3a5a3a; font-size: 13px; margin-bottom: 30px; }
-        .card { background: #0a1220; border: 1px solid #1a2a3a; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        .card h2 { color: #7fc7ff; font-size: 14px; letter-spacing: 1px; margin-bottom: 14px; }
-        input { background: #0f1a28; border: 1px solid #1a2a3a; border-radius: 6px; color: #cde; padding: 8px 12px; font-size: 13px; outline: none; }
-        input:focus { border-color: #39ff5a; }
-        button.gen { background: #39ff5a; color: #040c06; border: none; border-radius: 6px; padding: 9px 18px; font-weight: 700; cursor: pointer; letter-spacing: 1px; }
-        button.gen:hover { background: #50ff70; }
-        .dur-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-        .dur-btn { border: none; border-radius: 6px; padding: 8px 14px; font-weight: 700; cursor: pointer; font-size: 12px; letter-spacing: 1px; transition: opacity .15s; }
-        .dur-btn:hover { opacity: 0.8; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; padding: 10px; color: #3a6a8a; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #1a2a3a; }
-        .result { margin-top: 12px; padding: 12px; background: #0a1a0a; border: 1px solid #1a3a1a; border-radius: 8px; font-family: monospace; color: #39ff5a; font-size: 15px; letter-spacing: 2px; display: none; }
-        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
-        .stat { background: #0a1220; border: 1px solid #1a2a3a; border-radius: 10px; padding: 16px; text-align: center; }
-        .stat .n { font-size: 28px; font-weight: 700; color: #39ff5a; }
-        .stat .l { font-size: 11px; color: #3a5a6a; letter-spacing: 1px; margin-top: 4px; }
-    </style>
+<title>Agma Suite — Admin</title>
+<meta charset="utf-8">
+<style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#060c14;color:#cde;font-family:sans-serif;padding:30px}
+    h1{color:#39ff5a;letter-spacing:2px;margin-bottom:6px}
+    .sub{color:#3a5a3a;font-size:13px;margin-bottom:24px}
+    .card{background:#0a1220;border:1px solid #1a2a3a;border-radius:12px;padding:20px;margin-bottom:20px}
+    .card h2{font-size:13px;letter-spacing:1px;margin-bottom:14px;text-transform:uppercase}
+    .card h2.basic{color:#7fc7ff}.card h2.adv{color:#c07fff}
+    input,select{background:#0f1a28;border:1px solid #1a2a3a;border-radius:6px;color:#cde;padding:8px 12px;font-size:13px;outline:none}
+    input:focus,select:focus{border-color:#39ff5a}
+    .btn{border:none;border-radius:6px;padding:9px 18px;font-weight:700;cursor:pointer;letter-spacing:1px;font-size:13px}
+    .btn-basic{background:#39ff5a;color:#040c06}.btn-basic:hover{background:#50ff70}
+    .btn-adv{background:#a040ff;color:#fff}.btn-adv:hover{background:#b855ff}
+    .dur-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .dur-btn{border:none;border-radius:6px;padding:7px 13px;font-weight:700;cursor:pointer;font-size:12px}
+    table{width:100%;border-collapse:collapse}
+    th{text-align:left;padding:10px;color:#3a6a8a;font-size:11px;letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid #1a2a3a}
+    .result{margin-top:12px;padding:12px;background:#0a1a0a;border:1px solid #1a3a1a;border-radius:8px;font-family:monospace;color:#39ff5a;font-size:15px;letter-spacing:2px;display:none}
+    .result.adv{background:#1a0a2a;border-color:#4a1a8a;color:#c07fff}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+    .stat{background:#0a1220;border:1px solid #1a2a3a;border-radius:10px;padding:16px;text-align:center}
+    .stat .n{font-size:26px;font-weight:700}.stat .l{font-size:11px;color:#3a5a6a;letter-spacing:1px;margin-top:4px}
+    .gen-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:700px){.gen-grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}}
+</style>
 </head>
 <body>
-    <h1>AGMA SUITE // ADMIN</h1>
-    <p class="sub">Key management dashboard</p>
+<h1>AGMA SUITE // ADMIN</h1>
+<p class="sub">Key management dashboard &nbsp;·&nbsp; Two-tier system</p>
 
-    <div class="stats">
-        <div class="stat"><div class="n">${Object.keys(keys).length}</div><div class="l">TOTAL KEYS</div></div>
-        <div class="stat"><div class="n">${Object.values(keys).filter(d => d.expires > now).length}</div><div class="l">ACTIVE</div></div>
-        <div class="stat"><div class="n">${Object.values(keys).filter(d => d.expires <= now).length}</div><div class="l">EXPIRED</div></div>
-    </div>
+<div class="stats">
+    <div class="stat"><div class="n" style="color:#39ff5a">${totalKeys}</div><div class="l">TOTAL KEYS</div></div>
+    <div class="stat"><div class="n" style="color:#7fc7ff">${activeBasic}</div><div class="l">BASIC ACTIVE</div></div>
+    <div class="stat"><div class="n" style="color:#c07fff">${activeAdv}</div><div class="l">ADVANCED ACTIVE</div></div>
+    <div class="stat"><div class="n" style="color:#ff6060">${expiredKeys}</div><div class="l">EXPIRED</div></div>
+</div>
 
+<div class="gen-grid">
     <div class="card">
-        <h2>GENERATE NEW KEY</h2>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <input id="note" type="text" style="width:220px" placeholder="Player name (e.g. Beau)" />
+        <h2 class="basic">&#128273; Generate Basic Key</h2>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="note-b" placeholder="Player name" style="flex:1;min-width:120px">
+            <input id="days-b" type="number" value="30" min="1" style="width:80px">
+            <button class="btn btn-basic" onclick="genKey('b')">Generate</button>
         </div>
         <div class="dur-btns">
-            <button class="dur-btn" style="background:#1a3a1a;color:#39ff5a;border:1px solid #2a5a2a" onclick="genKey(1)">1 Day</button>
-            <button class="dur-btn" style="background:#1a3a2a;color:#50ff90;border:1px solid #2a5a3a" onclick="genKey(7)">1 Week</button>
-            <button class="dur-btn" style="background:#1a4a2a;color:#7fffa1;border:1px solid #2a6a3a" onclick="genKey(30)">1 Month</button>
-            <button class="dur-btn" style="background:#1a5a3a;color:#7fffc0;border:1px solid #2a7a4a" onclick="genKey(90)">3 Months</button>
-            <button class="dur-btn" style="background:#1a6a4a;color:#7fffd4;border:1px solid #2a8a5a" onclick="genKey(180)">6 Months</button>
-            <button class="dur-btn" style="background:#39ff5a;color:#040c06" onclick="genKey(365)">12 Months</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',1)">1 Day</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',7)">1 Week</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',30)">1 Month</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',90)">3 Months</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',180)">6 Months</button>
+            <button class="dur-btn" style="background:#1a3a1a;color:#7fff8c" onclick="setDays('b',365)">1 Year</button>
         </div>
-        <div class="result" id="result"></div>
+        <div id="result-b" class="result"></div>
     </div>
 
     <div class="card">
-        <h2>ALL KEYS</h2>
-        <table>
-            <thead><tr>
-                <th>Key</th><th>Player</th><th>Time Left</th><th>Expires</th><th>Fingerprint</th><th>Actions</th>
-            </tr></thead>
-            <tbody>${rows}</tbody>
-        </table>
+        <h2 class="adv">&#9889; Generate Advanced Key</h2>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="note-a" placeholder="Player name" style="flex:1;min-width:120px">
+            <input id="days-a" type="number" value="30" min="1" style="width:80px">
+            <button class="btn btn-adv" onclick="genKey('a')">Generate</button>
+        </div>
+        <div class="dur-btns">
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',1)">1 Day</button>
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',7)">1 Week</button>
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',30)">1 Month</button>
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',90)">3 Months</button>
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',180)">6 Months</button>
+            <button class="dur-btn" style="background:#2a0a3a;color:#c07fff" onclick="setDays('a',365)">1 Year</button>
+        </div>
+        <div id="result-a" class="result adv"></div>
     </div>
+</div>
 
-    <script>
-        const SECRET = '${ADMIN_SECRET}';
-        const SERVER = window.location.origin;
+<div class="card">
+    <h2 style="color:#7fc7ff">ALL KEYS</h2>
+    <table>
+        <thead><tr>
+            <th>Key</th><th>Player</th><th>Tier</th><th>Time Left</th><th>Expires</th><th>Device FP</th><th>Actions</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+    </table>
+</div>
 
-        async function genKey(days) {
-            const note = document.getElementById('note').value.trim();
-            if (!note) { alert('Please enter a player name first!'); document.getElementById('note').focus(); return; }
-            const r = await fetch(SERVER + '/admin/generate', {
-                method: 'POST',
-                headers: { 'x-admin-secret': SECRET, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ days, note })
-            });
-            const d = await r.json();
-            const el = document.getElementById('result');
-            el.style.display = 'block';
-            el.innerHTML = '&#128273; ' + d.key + '<br><span style="font-size:12px;color:#7fffa1">' + note + ' &middot; ' + d.timeLeft + '</span>';
-            setTimeout(() => location.reload(), 2000);
-        }
+<script>
+    const SERVER = '';
+    const SECRET = '${ADMIN_SECRET}';
 
-        async function deleteKey(key) {
-            if (!confirm('Delete key ' + key + '?')) return;
-            await fetch(SERVER + '/admin/keys/' + key, {
-                method: 'DELETE',
-                headers: { 'x-admin-secret': SECRET }
-            });
-            location.reload();
-        }
+    function setDays(t, d) {
+        document.getElementById('days-' + t).value = d;
+    }
 
-        async function extendKey(key) {
-            await fetch(SERVER + '/admin/extend', {
-                method: 'POST',
-                headers: { 'x-admin-secret': SECRET, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ key, days: 30 })
-            });
-            location.reload();
-        }
+    async function genKey(t) {
+        const days = document.getElementById('days-' + t).value;
+        const note = document.getElementById('note-' + t).value.trim();
+        const tier = t === 'a' ? 'advanced' : 'basic';
+        const r = await fetch(SERVER + '/admin/generate', {
+            method: 'POST',
+            headers: { 'x-admin-secret': SECRET, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ days, note, tier })
+        });
+        const d = await r.json();
+        const el = document.getElementById('result-' + t);
+        el.style.display = 'block';
+        el.innerHTML = (t === 'a' ? '&#9889; ' : '&#128273; ') + d.key
+            + '<br><span style="font-size:12px;opacity:0.7">' + (note || 'no name') + ' &middot; ' + d.timeLeft + ' &middot; ' + tier.toUpperCase() + '</span>';
+        setTimeout(() => location.reload(), 2000);
+    }
 
-        async function resetFP(key) {
-            await fetch(SERVER + '/admin/reset-fp/' + key, {
-                method: 'POST',
-                headers: { 'x-admin-secret': SECRET }
-            });
-            location.reload();
-        }
-    </script>
+    async function deleteKey(key) {
+        if (!confirm('Delete key ' + key + '?')) return;
+        await fetch(SERVER + '/admin/keys/' + key, { method: 'DELETE', headers: { 'x-admin-secret': SECRET } });
+        location.reload();
+    }
+
+    async function extendKey(key, days) {
+        await fetch(SERVER + '/admin/extend', {
+            method: 'POST',
+            headers: { 'x-admin-secret': SECRET, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key, days })
+        });
+        location.reload();
+    }
+
+    async function resetFP(key) {
+        await fetch(SERVER + '/admin/reset-fp/' + key, { method: 'POST', headers: { 'x-admin-secret': SECRET } });
+        location.reload();
+    }
+</script>
 </body>
 </html>`);
 });
 
-// ── Public: serve script + hardware fingerprint check ─────────────────────────
+// ── Public: serve script (tier-aware) ────────────────────────────────────────
 app.get('/script', (req, res) => {
     const result = validateKey(req.query.key);
     if (!result.valid) return res.status(403).json({ valid: false, reason: result.reason });
 
-    if (!fs.existsSync(SCRIPT_FILE)) return res.status(500).json({ error: 'Script not uploaded yet.' });
-
-    // Hardware fingerprint check
+    // Fingerprint check
     const fp = req.query.fp;
     if (fp) {
         const keys = loadKeys();
         const entry = keys[result.key];
         if (!entry.fingerprint) {
-            // First time — save this fingerprint
             entry.fingerprint = fp;
             saveKeys(keys);
         } else if (entry.fingerprint !== fp) {
-            // Different device — reject
             return res.status(403).json({ valid: false, reason: 'Key is already in use on another device. Contact support to reset.' });
         }
     }
 
-    const scriptCode = fs.readFileSync(SCRIPT_FILE, 'utf8');
-    const morphed    = morphScript(scriptCode);
+    // Tier routing — advanced keys get script-advanced.js, basic get script.js
+    const tier = result.entry.tier || 'basic';
+    const scriptFile = tier === 'advanced' ? SCRIPT_ADV_FILE : SCRIPT_FILE;
 
-    // Return morphed plain text — loader handles local storage encryption
+    if (!fs.existsSync(scriptFile)) {
+        const missing = tier === 'advanced' ? 'script-advanced.js' : 'script.js';
+        return res.status(500).json({ error: `Script not uploaded yet (${missing}).` });
+    }
+
+    const code = fs.readFileSync(scriptFile, 'utf8');
+    const morphed = morphScript(code);
+
     res.setHeader('Content-Type', 'text/javascript');
     res.setHeader('X-Time-Left', formatTimeLeft(result.timeLeft));
+    res.setHeader('X-Tier', tier);
     res.send(morphed);
 });
 
-// ── Public: check key only ─────────────────────────────────────────────────────
+// ── Public: check key ─────────────────────────────────────────────────────────
 app.get('/check', (req, res) => {
     const result = validateKey(req.query.key);
     if (!result.valid) return res.json({ valid: false, reason: result.reason });
-
-    // Also verify fingerprint if provided — catches revoked devices
     const fp = req.query.fp;
-    if (fp && result.entry.fingerprint && result.entry.fingerprint !== fp) {
+    if (fp && result.entry.fingerprint && result.entry.fingerprint !== fp)
         return res.json({ valid: false, reason: 'Key is already in use on another device.' });
-    }
-
-    return res.json({ valid: true, timeLeft: formatTimeLeft(result.timeLeft) });
+    return res.json({
+        valid: true,
+        timeLeft: formatTimeLeft(result.timeLeft),
+        tier: result.entry.tier || 'basic'
+    });
 });
 
-// ── Admin: upload script ──────────────────────────────────────────────────────
+// ── Admin: upload basic script ────────────────────────────────────────────────
 app.post('/admin/upload', (req, res) => {
     if (!adminCheck(req, res)) return;
     if (!req.body || !req.body.trim()) return res.status(400).json({ error: 'Send script as plain text.' });
     fs.writeFileSync(SCRIPT_FILE, req.body);
-    return res.json({ success: true, bytes: req.body.length });
+    return res.json({ success: true, file: 'script.js', bytes: req.body.length });
+});
+
+// ── Admin: upload advanced script ────────────────────────────────────────────
+app.post('/admin/upload-advanced', (req, res) => {
+    if (!adminCheck(req, res)) return;
+    if (!req.body || !req.body.trim()) return res.status(400).json({ error: 'Send script as plain text.' });
+    fs.writeFileSync(SCRIPT_ADV_FILE, req.body);
+    return res.json({ success: true, file: 'script-advanced.js', bytes: req.body.length });
 });
 
 // ── Admin: generate key ───────────────────────────────────────────────────────
 app.post('/admin/generate', (req, res) => {
     if (!adminCheck(req, res)) return;
-    const { days, note } = req.body;
+    const { days, note, tier } = req.body;
     if (!days) return res.status(400).json({ error: '"days" required' });
-    const key     = generateKey();
-    const keys    = loadKeys();
+    const validTiers = ['basic', 'advanced'];
+    const keyTier = validTiers.includes(tier) ? tier : 'basic';
+    const key = generateKey();
+    const keys = loadKeys();
     const expires = Date.now() + Number(days) * 86400000;
-    keys[key] = { expires, note: note || '', createdAt: Date.now() };
+    keys[key] = { expires, note: note || '', tier: keyTier, createdAt: Date.now() };
     saveKeys(keys);
-    return res.json({ success: true, key, timeLeft: formatTimeLeft(Number(days) * 86400000) });
+    return res.json({ success: true, key, tier: keyTier, timeLeft: formatTimeLeft(Number(days) * 86400000) });
 });
 
 // ── Admin: add custom key ─────────────────────────────────────────────────────
 app.post('/admin/add', (req, res) => {
     if (!adminCheck(req, res)) return;
-    const { key, days, note } = req.body;
+    const { key, days, note, tier } = req.body;
     if (!key || !days) return res.status(400).json({ error: '"key" and "days" required' });
-    const keys    = loadKeys();
-    const k       = key.trim().toUpperCase();
+    const validTiers = ['basic', 'advanced'];
+    const keyTier = validTiers.includes(tier) ? tier : 'basic';
+    const keys = loadKeys();
+    const k = key.trim().toUpperCase();
     const expires = Date.now() + Number(days) * 86400000;
-    keys[k] = { expires, note: note || '', createdAt: Date.now() };
+    keys[k] = { expires, note: note || '', tier: keyTier, createdAt: Date.now() };
     saveKeys(keys);
-    return res.json({ success: true, key: k, timeLeft: formatTimeLeft(Number(days) * 86400000) });
+    return res.json({ success: true, key: k, tier: keyTier, timeLeft: formatTimeLeft(Number(days) * 86400000) });
 });
 
 // ── Admin: list keys ──────────────────────────────────────────────────────────
 app.get('/admin/keys', (req, res) => {
     if (!adminCheck(req, res)) return;
     const keys = loadKeys();
-    const now  = Date.now();
+    const now = Date.now();
     return res.json(Object.entries(keys).map(([key, d]) => ({
         key, note: d.note,
+        tier: d.tier || 'basic',
         timeLeft: formatTimeLeft(d.expires - now),
         active: d.expires > now,
         fingerprint: d.fingerprint || null
@@ -342,7 +365,7 @@ app.get('/admin/keys', (req, res) => {
 app.delete('/admin/keys/:key', (req, res) => {
     if (!adminCheck(req, res)) return;
     const keys = loadKeys();
-    const k    = req.params.key.toUpperCase();
+    const k = req.params.key.toUpperCase();
     if (!keys[k]) return res.status(404).json({ error: 'Key not found' });
     delete keys[k]; saveKeys(keys);
     return res.json({ success: true });
@@ -354,28 +377,45 @@ app.post('/admin/extend', (req, res) => {
     const { key, days } = req.body;
     if (!key || !days) return res.status(400).json({ error: '"key" and "days" required' });
     const keys = loadKeys();
-    const k    = key.trim().toUpperCase();
+    const k = key.trim().toUpperCase();
     if (!keys[k]) return res.status(404).json({ error: 'Key not found' });
     keys[k].expires += Number(days) * 86400000;
     saveKeys(keys);
     return res.json({ success: true, key: k, timeLeft: formatTimeLeft(keys[k].expires - Date.now()) });
 });
 
+// ── Admin: upgrade key tier ───────────────────────────────────────────────────
+app.post('/admin/upgrade', (req, res) => {
+    if (!adminCheck(req, res)) return;
+    const { key, tier } = req.body;
+    if (!key || !tier) return res.status(400).json({ error: '"key" and "tier" required' });
+    const validTiers = ['basic', 'advanced'];
+    if (!validTiers.includes(tier)) return res.status(400).json({ error: 'tier must be basic or advanced' });
+    const keys = loadKeys();
+    const k = key.trim().toUpperCase();
+    if (!keys[k]) return res.status(404).json({ error: 'Key not found' });
+    keys[k].tier = tier;
+    saveKeys(keys);
+    return res.json({ success: true, key: k, tier });
+});
+
 // ── Admin: reset fingerprint ──────────────────────────────────────────────────
 app.post('/admin/reset-fp/:key', (req, res) => {
     if (!adminCheck(req, res)) return;
     const keys = loadKeys();
-    const k    = req.params.key.toUpperCase();
+    const k = req.params.key.toUpperCase();
     if (!keys[k]) return res.status(404).json({ error: 'Key not found' });
     delete keys[k].fingerprint;
     saveKeys(keys);
-    return res.json({ success: true, message: 'Fingerprint reset. User can activate on a new device.' });
+    return res.json({ success: true, message: 'Fingerprint reset.' });
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`\n✅  Agma Suite Server running on port ${PORT}`);
+    console.log(`\n✅  Agma Suite Server v7 running on port ${PORT}`);
     console.log(`🔐  Admin secret: ${ADMIN_SECRET === 'changeme123' ? '⚠️  Change via ADMIN_SECRET env var' : 'set'}`);
+    console.log(`📦  Basic script:    ${fs.existsSync(SCRIPT_FILE) ? '✅ uploaded' : '❌ not uploaded'}`);
+    console.log(`⚡  Advanced script: ${fs.existsSync(SCRIPT_ADV_FILE) ? '✅ uploaded' : '❌ not uploaded'}`);
     console.log(`\n🖥️   Dashboard: http://localhost:${PORT}/admin?secret=${ADMIN_SECRET}\n`);
 });
