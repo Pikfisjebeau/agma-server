@@ -1,16 +1,4 @@
-// ==UserScript==
-// @name         Agma Farm Suite
-// @namespace    agma-farm-suite
-// @version      0.9.16
-// @description  Multi-role farm tool: Block Feeder + Auto R2 (with Transfer) + XP Bot
-// @author       you
-// @match        *://agma.io/*
-// @grant        unsafeWindow
-// @run-at       document-start
-// @license      GPL-3.0-or-later
-// ==/UserScript==
-
-(function() {
+(function () {
     'use strict';
 
     // ===========================================================================
@@ -46,50 +34,50 @@
     // CONFIG
     // ===========================================================================
     const STORAGE_KEY = 'agma_farm_suite_cfg';
-    const BC_NAME     = 'agma_farm_suite';
+    const BC_NAME = 'agma_farm_suite';
 
     const ROLES = {
-        NONE:    'none',
-        FEEDER:  'feeder',
+        NONE: 'none',
+        FEEDER: 'feeder',
         AUTO_R2: 'auto_r2',
-        XP:      'xp',
+        XP: 'xp',
     };
     const ROLE_LABELS = {
-        [ROLES.NONE]:    'None',
-        [ROLES.FEEDER]:  'Block Feeder',
+        [ROLES.NONE]: 'None',
+        [ROLES.FEEDER]: 'Block Feeder',
         [ROLES.AUTO_R2]: 'Auto R2',
-        [ROLES.XP]:      'XP Bot (soon!)',
+        [ROLES.XP]: 'XP Bot (soon!)',
     };
 
     // Server X Instant coordinates (from msg 48)
-    const R1_PORTAL    = [3400, 15300];
-    const R2_PORTAL    = [12000, 15500];
-    const RECOMBINE    = [11000, 15000];
-    const SPEED        = [12800, 14500];
-    const LEFT_PELLET  = [11300, 14900];
+    const R1_PORTAL = [3400, 15300];
+    const R2_PORTAL = [12000, 15500];
+    const RECOMBINE = [11000, 15000];
+    const SPEED = [12800, 14500];
+    const LEFT_PELLET = [11300, 14900];
     const RIGHT_PELLET = [12600, 14900];
 
     const DEFAULTS = {
-        role:              ROLES.NONE,
-        altPrefix:         'alt',
-        altPassword:       '',
-        altCurrent:        1,
-        recWanted:         9,
-        speedWanted:       7,
-        xpTargetMass:      10000,
+        role: ROLES.NONE,
+        altPrefix: 'alt',
+        altPassword: '',
+        altCurrent: 1,
+        recWanted: 9,
+        speedWanted: 7,
+        xpTargetMass: 10000,
         // Target spot for the XP bot to sit at while being fed. Default is the center
         // of the (0,0)–(8800,8200) safe square (top-left quadrant on agma's X Instant).
-        xpTargetX:         4400,
-        xpTargetY:         4100,
+        xpTargetX: 4400,
+        xpTargetY: 4100,
         // Map size for the post-feed dispersion "go furthest direction" calculation.
         // X Instant map appears to bottom-out around Y=15500 (R2_PORTAL), so 14000 is
         // a safe lower-bound for the "which is more far" math.
-        xpMapHeight:       14000,
-        scanRadius:        2000,
-        feederKey:         '0',
-        r2Key:             '9',
-        xpKey:             '8',
-        minCellSize:       35,
+        xpMapHeight: 14000,
+        scanRadius: 2000,
+        feederKey: '0',
+        r2Key: '9',
+        xpKey: '8',
+        minCellSize: 35,
         // Block Feeder chase config.
         // feederChaseMode — what to chase between blocks:
         //   'none'   = no chase, just wait for next block (most discreet — minimal bot pattern)
@@ -104,23 +92,23 @@
         //              is already nearby
         //   'after'  = ONLY chase viruses after the block goes grey (no divert from
         //              active block, no pre-chase before feeding)
-        feederChaseMode:   'virus',
+        feederChaseMode: 'virus',
         feederVirusTiming: 'before',
         // feederFeedMode — how W-feed ejects mass per server tick:
         //   'multi'  = max multi-eject (5 cells per press, like gayma's V key) — default,
         //              maximum throughput into the block
         //   'normal' = single eject (1 cell per press, like the normal W key) — slower
         //              but more discreet, less suspicious throughput pattern
-        feederFeedMode:    'multi',
+        feederFeedMode: 'multi',
         // feederMinMass — stop W-feeding the block once our cell shrinks below this
         // mass. Feeding ejects mass, so without a floor the cell can melt away into
         // nothing while the block keeps draining it. The proximity tick checks this
         // every 200 ms and toggles feed off below the threshold (and back on once
         // pellet pickup grows the cell above it again). Mass = floor(size² / 100).
-        feederMinMass:     100,
+        feederMinMass: 100,
         // X Instant cycle timings (tunable from Auto R2 tab)
-        r2TravelTime:      8,       // seconds at RECOMBINE before freeze
-        r2FeedDuration:    0.5,     // seconds of W-feed simultaneous with split
+        r2TravelTime: 8,       // seconds at RECOMBINE before freeze
+        r2FeedDuration: 0.5,     // seconds of W-feed simultaneous with split
         r2PelletTimeoutMs: 15000,   // (unused — kept so saved configs don't break)
     };
 
@@ -129,45 +117,45 @@
         catch (_) { return { ...DEFAULTS }; }
     }
     function saveConfig() {
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)); } catch (_) {}
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)); } catch (_) { }
     }
     const config = loadConfig();
 
     // ===========================================================================
     // STATE
     // ===========================================================================
-    let role           = config.role;
-    let enabled        = false;          // is the active role's bot toggled on?
-    let portalMode     = null;           // R1 / R2 detected from portal entry
+    let role = config.role;
+    let enabled = false;          // is the active role's bot toggled on?
+    let portalMode = null;           // R1 / R2 detected from portal entry
     const Modes = { R1: 0, R2: 1 };
 
     // Shared cell tracking
-    let mainWs            = null;
-    let cellAttributes    = null;
-    let allCells          = {};
-    let imageIdSetupDone  = false;
+    let mainWs = null;
+    let cellAttributes = null;
+    let allCells = {};
+    let imageIdSetupDone = false;
 
     // Auto R2
-    let altWindow      = null;
-    let altWs          = null;
-    let allAltCells    = {};
-    let r2Phase        = 'OFF';          // OFF | CYCLING | TRAVELING | WAIT_PELLETS | EATING — R2 cycle only
-    let r2StartTime    = 0;
-    let monitorCellId  = null;
-    let cycleAbort     = false;
-    let liveRecCount   = 0;
+    let altWindow = null;
+    let altWs = null;
+    let allAltCells = {};
+    let r2Phase = 'OFF';          // OFF | CYCLING | TRAVELING | WAIT_PELLETS | EATING — R2 cycle only
+    let r2StartTime = 0;
+    let monitorCellId = null;
+    let cycleAbort = false;
+    let liveRecCount = 0;
     let liveSpeedCount = 0;
     let cyclesCompleted = 0;
     // Alt's most recent rec/speed counts from its op 80. Updated whenever an alt op 80 arrives.
-    let altRecCount        = 0;
-    let altSpeedCount      = 0;
-    let altCountsReceived  = false;
-    let lastReadyLog           = 0;     // throttle for "ready, open alt tab" console message
-    let lastReadyNotif         = 0;     // throttle for desktop notification (10s)
+    let altRecCount = 0;
+    let altSpeedCount = 0;
+    let altCountsReceived = false;
+    let lastReadyLog = 0;     // throttle for "ready, open alt tab" console message
+    let lastReadyNotif = 0;     // throttle for desktop notification (10s)
     let pelletDetectedCount = 0;
-    let waitingForPellets   = false;
-    let pelletAtLeft        = false;
-    let pelletAtRight       = false;
+    let waitingForPellets = false;
+    let pelletAtLeft = false;
+    let pelletAtRight = false;
 
     // ===========================================================================
     // AUTO-TRANSFER STATE MACHINE (v0.6.0 rewrite)
@@ -206,60 +194,60 @@
     // (or fix altPassword/altPrefix/altCurrent) to resume.
     // ===========================================================================
     const T_STATE = {
-        IDLE                 : 'IDLE',
-        LOGGING_IN           : 'LOGGING_IN',
-        CHECK_COUNTS         : 'CHECK_COUNTS',
-        WAITING_FOR_R2       : 'WAITING_FOR_R2',
-        SPAWNING             : 'SPAWNING',
-        WAITING_DROP_CONFIRM : 'WAITING_DROP_CONFIRM',
-        LOGGING_OUT          : 'LOGGING_OUT',
+        IDLE: 'IDLE',
+        LOGGING_IN: 'LOGGING_IN',
+        CHECK_COUNTS: 'CHECK_COUNTS',
+        WAITING_FOR_R2: 'WAITING_FOR_R2',
+        SPAWNING: 'SPAWNING',
+        WAITING_DROP_CONFIRM: 'WAITING_DROP_CONFIRM',
+        LOGGING_OUT: 'LOGGING_OUT',
     };
     // Per-state timeouts in ms. WAITING_FOR_R2 is intentionally absent — it waits forever.
     // Tightened in 0.6.1 — typical happy-path durations on a healthy connection
     // are well under these limits; the timeouts only fire on genuine stalls.
     const T_TIMEOUTS = {
-        LOGGING_IN           : 5000,
-        CHECK_COUNTS         : 2000,
-        SPAWNING             : 3000,
-        WAITING_DROP_CONFIRM : 4000,
-        LOGGING_OUT          : 2000,
+        LOGGING_IN: 5000,
+        CHECK_COUNTS: 2000,
+        SPAWNING: 3000,
+        WAITING_DROP_CONFIRM: 4000,
+        LOGGING_OUT: 2000,
     };
     const T_MAX_CONSECUTIVE_FAILS = 5;   // after this many alts all fail, pause the chain
 
-    let tState            = T_STATE.IDLE;
-    let tStateEnteredAt   = 0;
-    let tAttempts         = 0;        // failure count for the CURRENT alt; 3 → advance
-    let tDropsSentAt      = 0;        // timestamp of the drop burst (filters stale op 80)
-    let tDropCoords       = null;     // { x, y } where drops landed — for UI
-    let tLastStatusLog    = 0;        // throttles WAITING_FOR_R2 console reminder
+    let tState = T_STATE.IDLE;
+    let tStateEnteredAt = 0;
+    let tAttempts = 0;        // failure count for the CURRENT alt; 3 → advance
+    let tDropsSentAt = 0;        // timestamp of the drop burst (filters stale op 80)
+    let tDropCoords = null;     // { x, y } where drops landed — for UI
+    let tLastStatusLog = 0;        // throttles WAITING_FOR_R2 console reminder
     let tNextLoginTimerId = null;     // handle for the LOGGING_OUT → 1s → next-login timer
-    let tSpawnRetryCount  = 0;        // retries for SPAWNING setNick if no op 13 arrives
-    let tR2WasReady       = false;    // for edge-triggered "R2 ready" log when liveRec/Speed crosses threshold
+    let tSpawnRetryCount = 0;        // retries for SPAWNING setNick if no op 13 arrives
+    let tR2WasReady = false;    // for edge-triggered "R2 ready" log when liveRec/Speed crosses threshold
     let tConsecutiveFails = 0;        // number of alts in a row that hit 3 strikes
-    let tPaused           = false;    // true after T_MAX_CONSECUTIVE_FAILS — chain stops auto-restarting
+    let tPaused = false;    // true after T_MAX_CONSECUTIVE_FAILS — chain stops auto-restarting
 
     // Feeder
-    let feederPhase       = 'IDLE';      // IDLE | FEEDING | DIVERT | VIRUS | XP_BOOST | OFF
-    let feederTargets     = new Map();   // gold block id -> cell
-    let feederTarget      = null;
-    let feederFeedOn      = false;       // tracks server-side feed state (so the FEEDING-phase
-                                          // proximity loop doesn't re-spam feedOn/feedOff every tick)
+    let feederPhase = 'IDLE';      // IDLE | FEEDING | DIVERT | VIRUS | XP_BOOST | OFF
+    let feederTargets = new Map();   // gold block id -> cell
+    let feederTarget = null;
+    let feederFeedOn = false;       // tracks server-side feed state (so the FEEDING-phase
+    // proximity loop doesn't re-spam feedOn/feedOff every tick)
     let divertedFromTarget = null;       // block target paused for a virus diversion — resume after virus is gone
-    let isFrozen          = false;
-    let virusInterval     = null;
-    let xpBoostInterval   = null;
-    let xpBoostLastRecv   = 0;
-    let xpBoostTarget     = null;
+    let isFrozen = false;
+    let virusInterval = null;
+    let xpBoostInterval = null;
+    let xpBoostLastRecv = 0;
+    let xpBoostTarget = null;
 
     // XP role
     let xpBroadcastInterval = null;
-    let xpCurrentMass       = 0;
-    let xpCurrentPos        = null;
-    let xpPhase             = 'OFF';      // OFF | POSITIONING | READY | DISPERSING | DONE
+    let xpCurrentMass = 0;
+    let xpCurrentPos = null;
+    let xpPhase = 'OFF';      // OFF | POSITIONING | READY | DISPERSING | DONE
     // Tracks whether the previous xpTick saw any own cells. Lets us detect the
     // edge from "had cells" → "no cells" (i.e. death) and broadcast xp_dead so
     // the feeder exits XP_BOOST immediately instead of timing out after 4s.
-    let xpHadCells          = false;
+    let xpHadCells = false;
 
     // ===========================================================================
     // LAG / HIGH-PING SAFETY
@@ -275,8 +263,8 @@
     // message clears the flag and operation resumes.
     // ===========================================================================
     const LAG_THRESHOLD_MS = 2000;
-    let   lastIncomingTime = Date.now();
-    let   pausedDueToLag   = false;
+    let lastIncomingTime = Date.now();
+    let pausedDueToLag = false;
     function isLaggy() { return pausedDueToLag; }
     function noteIncoming() {
         lastIncomingTime = Date.now();
@@ -305,8 +293,8 @@
     }
 
     // Virus / cellId tracking (from afk feeder)
-    const myCellIds      = new Set();
-    const virusCells     = new Map();
+    const myCellIds = new Set();
+    const virusCells = new Map();
     const virusCellTypes = new Map();
 
     // ===========================================================================
@@ -315,7 +303,7 @@
     const channel = new BroadcastChannel(BC_NAME);
 
     function bcSend(msg) {
-        try { channel.postMessage(msg); } catch (_) {}
+        try { channel.postMessage(msg); } catch (_) { }
     }
 
     channel.addEventListener('message', ev => {
@@ -323,7 +311,7 @@
         if (role === ROLES.FEEDER) {
             if (m.type === 'xp_active') {
                 xpBoostLastRecv = Date.now();
-                xpBoostTarget   = { x: m.x, y: m.y, mass: m.mass };
+                xpBoostTarget = { x: m.x, y: m.y, mass: m.mass };
                 if (enabled && m.mass < config.xpTargetMass) enterXpBoost();
                 else if (m.mass >= config.xpTargetMass) exitXpBoost();
                 updateUI();
@@ -343,24 +331,24 @@
     // ===========================================================================
     // PACKETS
     // ===========================================================================
-    const mousePacket        = new DataView(new ArrayBuffer(9));    // op 0
+    const mousePacket = new DataView(new ArrayBuffer(9));    // op 0
     mousePacket.setUint8(0, 0);
-    const virusMousePacket   = new DataView(new ArrayBuffer(9));
+    const virusMousePacket = new DataView(new ArrayBuffer(9));
     virusMousePacket.setUint8(0, 0);
-    const xpMousePacket      = new DataView(new ArrayBuffer(9));
+    const xpMousePacket = new DataView(new ArrayBuffer(9));
     xpMousePacket.setUint8(0, 0);
-    const splitPacket        = new Uint8Array([17]).buffer;
+    const splitPacket = new Uint8Array([17]).buffer;
     const splitMinionsPacket = new Uint8Array([32]).buffer;
-    const freezePacket       = new Uint8Array([35]).buffer;
-    const logoutPacket       = new Uint8Array([5]).buffer;
-    const feedOnPacket       = new Uint8Array([21]).buffer;
-    const feedOffPacket      = new Uint8Array([36]).buffer;
+    const freezePacket = new Uint8Array([35]).buffer;
+    const logoutPacket = new Uint8Array([5]).buffer;
+    const feedOnPacket = new Uint8Array([21]).buffer;
+    const feedOffPacket = new Uint8Array([36]).buffer;
     // op 180 = set ejected-cells-per-W. Gayma sends this when toggling between the
     // W key (single eject, [180,1]) and the V key (max multi-eject, [180,5]). Once
     // set, every subsequent feedOn (op 21) uses that count until changed.
-    const normalFeedPacket   = new Uint8Array([180, 1]).buffer;
+    const normalFeedPacket = new Uint8Array([180, 1]).buffer;
     const multiFeedMaxPacket = new Uint8Array([180, 5]).buffer;
-    const dropPowerPacket    = new DataView(new ArrayBuffer(10));   // op 72
+    const dropPowerPacket = new DataView(new ArrayBuffer(10));   // op 72
     dropPowerPacket.setUint8(0, 72);
 
     // Spawn packets — mirror what gayma's setNick fires (sendSignal(34) + sendPlayerUpdate).
@@ -371,13 +359,13 @@
     //   [1-2] = 0 (skinId uint16 LE — default skin)
     //   [3] = 0   (wearables count)
     // Empty nickname → no trailing bytes. Server falls back to the account name.
-    const spawnSignalPacket  = new Uint8Array([34]).buffer;
+    const spawnSignalPacket = new Uint8Array([34]).buffer;
     const spawnRequestPacket = new Uint8Array([1, 0, 0, 0]).buffer;
 
     // ===========================================================================
     // WEBSOCKET CAPTURE
     // ===========================================================================
-    const NativeWS  = unsafeWindow.WebSocket;
+    const NativeWS = unsafeWindow.WebSocket;
     const nativeSend = NativeWS.prototype.send;       // captured first
 
     // hook onmessage so we can parse server packets
@@ -386,9 +374,9 @@
         configurable: true, enumerable: true,
         get() { return _origMsg.get.call(this); },
         set(handler) {
-            const wrapped = function(event) {
+            const wrapped = function (event) {
                 if (event.data instanceof ArrayBuffer) {
-                    try { handleIncoming(this, new DataView(event.data)); } catch (_) {}
+                    try { handleIncoming(this, new DataView(event.data)); } catch (_) { }
                 }
                 handler.call(this, event);
             };
@@ -397,7 +385,7 @@
     });
 
     // capture main socket via constructor override
-    unsafeWindow.WebSocket = function(url, protocols) {
+    unsafeWindow.WebSocket = function (url, protocols) {
         const sock = protocols ? new NativeWS(url, protocols) : new NativeWS(url);
         if (typeof url === 'string' && url.includes('agma')) {
             mainWs = sock;
@@ -412,7 +400,7 @@
 
     // block game's mouse packets when bot active so we can drive the cell
     const _prevSend = NativeWS.prototype.send;
-    NativeWS.prototype.send = function(pkt) {
+    NativeWS.prototype.send = function (pkt) {
         if (enabled && (role === ROLES.FEEDER || role === ROLES.AUTO_R2)
             && pkt?.getUint8?.(0) === 0) return;
         return _prevSend.apply(this, arguments);
@@ -438,14 +426,14 @@
         // alt ops 80 / 95 route into the new transfer state machine.
         if (role === ROLES.AUTO_R2 && enabled) {
             if (ws === mainWs && op === 80) {
-                liveRecCount   = view.getUint32(10, true);
+                liveRecCount = view.getUint32(10, true);
                 liveSpeedCount = view.getUint32(14, true);
                 transferOnMainOp80();
                 updateUI();
             } else if (ws === altWs) {
                 if (op === 80) {
-                    altRecCount       = view.getUint32(10, true);
-                    altSpeedCount     = view.getUint32(14, true);
+                    altRecCount = view.getUint32(10, true);
+                    altSpeedCount = view.getUint32(14, true);
                     altCountsReceived = true;
                     transferOnAltOp80();
                 } else if (op === 95) {
@@ -476,7 +464,7 @@
             const numProfiles = view.getUint16(pos, true); pos += 2;
             for (let i = 0; i < numProfiles; i++) {
                 const flags = view.getUint8(pos); pos += 1;
-                if (flags & 2)  pos += 1;
+                if (flags & 2) pos += 1;
                 if (flags & 32) pos += 1;
                 pos += 4;
                 if (flags & 1) pos += 4;
@@ -493,10 +481,10 @@
                 const cellId = view.getUint32(pos, true); pos += 4;
                 if (!cellId) break;
                 if (pos + 10 > view.byteLength) break;
-                const x     = view.getInt32(pos, true);  pos += 4;
-                const y     = view.getInt32(pos, true);  pos += 4;
-                const size  = view.getUint16(pos, true); pos += 2;
-                const flags = view.getUint8(pos);        pos += 1;
+                const x = view.getInt32(pos, true); pos += 4;
+                const y = view.getInt32(pos, true); pos += 4;
+                const size = view.getUint16(pos, true); pos += 2;
+                const flags = view.getUint8(pos); pos += 1;
                 const isNew = !!(flags & 1);
                 if (isNew) {
                     const type = view.getUint8(pos); pos += 1;
@@ -511,7 +499,7 @@
                 if (existing) { existing.x = x; existing.y = y; existing.size = size; }
                 else { virusCells.set(cellId, { x, y, size, type }); }
             }
-        } catch (_) {}
+        } catch (_) { }
     }
 
     function handleCellKilled(view) {
@@ -532,7 +520,7 @@
                 feederTarget = null;
                 selectNextFeederTarget();
             }
-        } catch (_) {}
+        } catch (_) { }
     }
 
     function handleCellRemoved(view) {
@@ -552,14 +540,14 @@
                 feederTarget = null;
                 selectNextFeederTarget();
             }
-        } catch (_) {}
+        } catch (_) { }
     }
 
     // ===========================================================================
     // CELL PUSH HOOK — capture cellAttributes & detect portals/gold blocks
     // ===========================================================================
     const _prevPush = unsafeWindow.Array.prototype.push;
-    unsafeWindow.Array.prototype.push = function(cell) {
+    unsafeWindow.Array.prototype.push = function (cell) {
         if (!imageIdSetupDone && cell?.namePart !== undefined && cell?.id !== undefined) {
             cellAttributes = Object.getOwnPropertyNames(cell);
             imageIdSetupDone = true;
@@ -568,11 +556,11 @@
                     configurable: true,
                     get() { return this.__imageId; },
                     set(imageId) {
-                        try { handleImageId(this, imageId); } catch (_) {}
+                        try { handleImageId(this, imageId); } catch (_) { }
                         return this.__imageId = imageId;
                     }
                 });
-            } catch (_) {}
+            } catch (_) { }
         }
         return _prevPush.apply(this, arguments);
     };
@@ -596,7 +584,7 @@
         // that actually appear at one of the two known drop spots
         if (imageId === 3 && waitingForPellets) {
             const TOL = 600;  // tolerance for "near a spot" in game units
-            const dl = Math.hypot(x - LEFT_PELLET[0],  y - LEFT_PELLET[1]);
+            const dl = Math.hypot(x - LEFT_PELLET[0], y - LEFT_PELLET[1]);
             const dr = Math.hypot(x - RIGHT_PELLET[0], y - RIGHT_PELLET[1]);
             if (dl < TOL && dl <= dr) {
                 pelletAtLeft = true;
@@ -662,7 +650,7 @@
 
     // allCells capture
     const _prevHasOwn = unsafeWindow.Object.prototype.hasOwnProperty;
-    unsafeWindow.Object.prototype.hasOwnProperty = function() {
+    unsafeWindow.Object.prototype.hasOwnProperty = function () {
         if (allCells !== this && arguments?.[0] > 10000) allCells = this;
         return _prevHasOwn.apply(this, arguments);
     };
@@ -670,8 +658,8 @@
     // ===========================================================================
     // FEEDER ROLE
     // ===========================================================================
-    function freeze()   { if (!isFrozen) { isFrozen = true;  nativeSend.call(mainWs, freezePacket); } }
-    function unfreeze() { if ( isFrozen) { isFrozen = false; nativeSend.call(mainWs, freezePacket); } }
+    function freeze() { if (!isFrozen) { isFrozen = true; nativeSend.call(mainWs, freezePacket); } }
+    function unfreeze() { if (isFrozen) { isFrozen = false; nativeSend.call(mainWs, freezePacket); } }
 
     function getMyPosition() {
         let x = 0, y = 0, count = 0;
@@ -700,7 +688,7 @@
             if (myCellIds.has(cell.id)) continue;
             const dx = cell.x - pos.x;
             const dy = cell.y - pos.y;
-            if (Math.sqrt(dx*dx + dy*dy) > radius) continue;
+            if (Math.sqrt(dx * dx + dy * dy) > radius) continue;
             const diff = Math.abs(cell.size - mySize);
             if (diff < bestDiff) { bestDiff = diff; nearest = cell; }
         }
@@ -721,7 +709,7 @@
             if (myCellIds.has(cell.id)) continue;
             const dx = cell.x - pos.x;
             const dy = cell.y - pos.y;
-            const d  = Math.sqrt(dx*dx + dy*dy);
+            const d = Math.sqrt(dx * dx + dy * dy);
             if (d > radius) continue;
             if (d < bestDist) { bestDist = d; nearest = cell; }
         }
@@ -888,7 +876,7 @@
     function applyFeederFeedMode() {
         if (!mainWs) return;
         const pkt = config.feederFeedMode === 'normal' ? normalFeedPacket : multiFeedMaxPacket;
-        try { nativeSend.call(mainWs, pkt); } catch (_) {}
+        try { nativeSend.call(mainWs, pkt); } catch (_) { }
     }
 
     function feedTowards(cell) {
@@ -1014,7 +1002,7 @@
 
         // 2. Split N times, 150 ms between presses so each split registers fully.
         for (let i = 0; i < splitCount; i++) {
-            try { nativeSend.call(mainWs, splitPacket); } catch (_) {}
+            try { nativeSend.call(mainWs, splitPacket); } catch (_) { }
             await wait(0.15);
             if (!stillRunning()) return;
         }
@@ -1023,7 +1011,7 @@
         //    the user toggles off.
         await wait(0.3);
         if (!stillRunning()) return;
-        try { nativeSend.call(mainWs, feedOnPacket); } catch (_) {}
+        try { nativeSend.call(mainWs, feedOnPacket); } catch (_) { }
         feederFeedOn = true;
         console.log('[FarmSuite] Cluster feed: W-feed ON');
     }
@@ -1073,7 +1061,7 @@
             // user can move again. Normal mode keeps the cell pinned on exit
             // (matches the legacy behaviour after farming a single block).
             if (wasGigantic) unfreeze();
-            else             freeze();
+            else freeze();
         }
         updateUI();
     }
@@ -1149,7 +1137,7 @@
         const c = center || { x: 0, y: 0 };
         antiAfkPacket.setInt32(1, Math.round(c.x) + antiAfkJiggle, true);
         antiAfkPacket.setInt32(5, Math.round(c.y), true);
-        try { nativeSend.call(ws, antiAfkPacket.buffer); } catch (_) {}
+        try { nativeSend.call(ws, antiAfkPacket.buffer); } catch (_) { }
     }
 
     // Returns true when the bot is in a phase where it's actively driving the cell's
@@ -1220,16 +1208,16 @@
             const canvas = doc.getElementById('canvas') || doc.querySelector('canvas');
             if (!canvas) return;
             const rect = canvas.getBoundingClientRect();
-            const cx = rect.left + rect.width  / 2;
-            const cy = rect.top  + rect.height / 2;
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
             const ME = altWindow.MouseEvent || MouseEvent;
             for (const offset of [altDomJiggle, -altDomJiggle]) {
                 canvas.dispatchEvent(new ME('mousemove', {
-                    bubbles:    true,
+                    bubbles: true,
                     cancelable: true,
-                    clientX:    cx + offset,
-                    clientY:    cy,
-                    view:       altWindow,
+                    clientX: cx + offset,
+                    clientY: cy,
+                    view: altWindow,
                 }));
             }
             altDomJiggle = -altDomJiggle;
@@ -1253,9 +1241,9 @@
     //  - cooldown: at most one respawn per 5s so we don't spam setNick if the
     //    new spawn dies instantly (cell appears, dies again, we'd loop)
     // ===========================================================================
-    let hasEverSpawned       = false;
-    let mainDeadSince        = 0;
-    let lastRespawnAttempt   = 0;
+    let hasEverSpawned = false;
+    let mainDeadSince = 0;
+    let lastRespawnAttempt = 0;
 
     function mainHasOwnCells() {
         if (!cellAttributes) return false;
@@ -1269,7 +1257,7 @@
         if (!enabled) { mainDeadSince = 0; return; }
         if (mainHasOwnCells()) {
             hasEverSpawned = true;
-            mainDeadSince  = 0;
+            mainDeadSince = 0;
             return;
         }
         if (!hasEverSpawned) return;
@@ -1278,7 +1266,7 @@
         if (now - mainDeadSince < 2000) return;
         if (now - lastRespawnAttempt < 5000) return;
         lastRespawnAttempt = now;
-        mainDeadSince      = 0;
+        mainDeadSince = 0;
         console.log('%c[FarmSuite] Main has no cells — triggering respawn', 'color:#ffb74a');
         try { unsafeWindow.setNick(''); }
         catch (e) { console.warn('[FarmSuite] setNick failed:', e); }
@@ -1321,7 +1309,7 @@
             const now = Date.now();
             if (now - tLastStatusLog > 30000) {
                 tLastStatusLog = now;
-                const recDef   = Math.max(0, config.recWanted   - altRecCount);
+                const recDef = Math.max(0, config.recWanted - altRecCount);
                 const speedDef = Math.max(0, config.speedWanted - altSpeedCount);
                 console.log(
                     `[FarmSuite][Transfer] ${currentAltName()} still WAITING_FOR_R2 — needs ${recDef}/${speedDef}, main has ${liveRecCount}/${liveSpeedCount}`
@@ -1335,7 +1323,7 @@
 
         // Every other state has a bounded timeout.
         const elapsed = Date.now() - tStateEnteredAt;
-        const limit   = T_TIMEOUTS[tState];
+        const limit = T_TIMEOUTS[tState];
         if (limit && elapsed > limit) {
             console.warn(`[FarmSuite][Transfer] State ${tState} timed out after ${elapsed}ms`);
             tOnFailure(`${tState} timeout`);
@@ -1387,8 +1375,8 @@
                 // coords inside the canvas.
                 if (!hasMoved) {
                     const r = canvas.getBoundingClientRect();
-                    mouseX = r.left + r.width  / 2;
-                    mouseY = r.top  + r.height / 2;
+                    mouseX = r.left + r.width / 2;
+                    mouseY = r.top + r.height / 2;
                 }
                 for (const offset of [1, -1]) {
                     canvas.dispatchEvent(new MouseEvent('mousemove', {
@@ -1421,8 +1409,8 @@
                 renotify: true,
                 silent: false,
             });
-            setTimeout(() => { try { n.close(); } catch (_) {} }, 8000);
-        } catch (_) {}
+            setTimeout(() => { try { n.close(); } catch (_) { } }, 8000);
+        } catch (_) { }
     }
 
     // Poll until own-cell center is within `tolerance` of `target`, or timeout (ms).
@@ -1491,9 +1479,9 @@
                 .map(s => 'wss://' + s.address + '/'));
             return {
                 xy_insta: urlsMatching(n => n.includes('xy-insta')),
-                crazy:    urlsMatching(n => n.includes('crazy')),
+                crazy: urlsMatching(n => n.includes('crazy')),
                 gigantic: urlsMatching(n => n.includes('gig') || n.includes('giant')),
-                instant:  urlsMatching(n => n.includes('instant')),
+                instant: urlsMatching(n => n.includes('instant')),
             };
         } catch (_) { return null; }
     }
@@ -1503,9 +1491,9 @@
         const check = sets => {
             if (!sets) return null;
             if (sets.xy_insta.has(u)) return 'xy_insta';
-            if (sets.crazy.has(u))    return 'crazy';
+            if (sets.crazy.has(u)) return 'crazy';
             if (sets.gigantic.has(u)) return 'gigantic';
-            if (sets.instant.has(u))  return 'instant';
+            if (sets.instant.has(u)) return 'instant';
             return null;
         };
         if (!serverUrlSets) serverUrlSets = buildServerUrlSets();
@@ -1520,11 +1508,11 @@
         // server. Name-based match is what the status row already shows the user.
         try {
             const name = (unsafeWindow.currentServerName || '').toLowerCase();
-            if (name.includes('xy-insta'))                     return 'xy_insta';
-            if (name.includes('crazy'))                        return 'crazy';
+            if (name.includes('xy-insta')) return 'xy_insta';
+            if (name.includes('crazy')) return 'crazy';
             if (name.includes('gig') || name.includes('giant')) return 'gigantic';
-            if (name.includes('instant'))                      return 'instant';
-        } catch (_) {}
+            if (name.includes('instant')) return 'instant';
+        } catch (_) { }
         return 'unknown';
     }
 
@@ -1622,11 +1610,11 @@
         r2Phase = 'TRAVELING';
         updateUI();
         const travelStart = Date.now();
-        const minWaitMs   = config.r2TravelTime * 1000;
-        const arrived     = await r2WaitUntilNear(RECOMBINE, 800, minWaitMs * 2);
+        const minWaitMs = config.r2TravelTime * 1000;
+        const arrived = await r2WaitUntilNear(RECOMBINE, 800, minWaitMs * 2);
         if (cycleAbort || !enabled) return;
         if (!arrived) {
-            console.warn(`[FarmSuite] Cell did not reach RECOMBINE within ${config.r2TravelTime*2}s — proceeding anyway`);
+            console.warn(`[FarmSuite] Cell did not reach RECOMBINE within ${config.r2TravelTime * 2}s — proceeding anyway`);
         }
         const elapsedMs = Date.now() - travelStart;
         if (elapsedMs < minWaitMs) {
@@ -1666,7 +1654,7 @@
         nativeSend.call(mainWs, freezePacket);  // toggle: unfreeze
         const ateRight = await eatAtSpot(RIGHT_PELLET, 'RIGHT');
         if (cycleAbort || !enabled) return;
-        const ateLeft  = await eatAtSpot(LEFT_PELLET,  'LEFT');
+        const ateLeft = await eatAtSpot(LEFT_PELLET, 'LEFT');
         if (cycleAbort || !enabled) return;
         if (ateRight && ateLeft) {
             console.log('[FarmSuite] Ate both pellets — cycling');
@@ -1732,13 +1720,13 @@
         if (AltWS && AltWS.prototype) {
             // capture send so we can know about its socket
             const altOrigSend = AltWS.prototype.send;
-            AltWS.prototype.send = function(pkt) {
+            AltWS.prototype.send = function (pkt) {
                 if (altWs !== this && typeof this.url === 'string' && this.url.includes('agma')) {
                     altWs = this;
                     allAltCells = {};
                     this.addEventListener('message', message => {
                         if (!enabled || role !== ROLES.AUTO_R2) return;
-                        try { handleIncoming(this, new DataView(message.data)); } catch (_) {}
+                        try { handleIncoming(this, new DataView(message.data)); } catch (_) { }
                     });
                 }
                 if (enabled && role === ROLES.AUTO_R2 && pkt?.getUint8?.(0) === 0) return;
@@ -1755,11 +1743,11 @@
         // mirror our hasOwnProperty / push hooks to alt window so allAltCells is captured
         try {
             const _altHasOwn = altWindow.Object.prototype.hasOwnProperty;
-            altWindow.Object.prototype.hasOwnProperty = function() {
+            altWindow.Object.prototype.hasOwnProperty = function () {
                 if (allAltCells !== this && arguments?.[0] > 10000) allAltCells = this;
                 return _altHasOwn.apply(this, arguments);
             };
-        } catch (_) {}
+        } catch (_) { }
 
         return true;
     }
@@ -1777,7 +1765,7 @@
     function tSetState(newState) {
         if (tState === newState) return;
         console.log(`%c[FarmSuite][Transfer] ${tState} → ${newState}`, 'color:#9ab8ff');
-        tState          = newState;
+        tState = newState;
         tStateEnteredAt = Date.now();
         updateUI();
     }
@@ -1851,15 +1839,15 @@
         // Fresh-session reset so a stale op 80 from the previous session can't pollute
         // the new alt's CHECK_COUNTS decision.
         altCountsReceived = false;
-        altRecCount       = 0;
-        altSpeedCount     = 0;
-        tDropsSentAt      = 0;
-        tDropCoords       = null;
-        tSpawnRetryCount  = 0;
+        altRecCount = 0;
+        altSpeedCount = 0;
+        tDropsSentAt = 0;
+        tDropCoords = null;
+        tSpawnRetryCount = 0;
 
         const username = currentAltName();
         const password = md5Fn(config.altPassword);
-        const buf = new ArrayBuffer(5 + 2*username.length + 2*password.length);
+        const buf = new ArrayBuffer(5 + 2 * username.length + 2 * password.length);
         const v = new DataView(buf);
         v.setUint8(0, 2);
         let pos = 1;
@@ -1901,7 +1889,7 @@
                 tDoLogout();
                 return;
             }
-            const recDef   = config.recWanted   - altRecCount;
+            const recDef = config.recWanted - altRecCount;
             const speedDef = config.speedWanted - altSpeedCount;
             console.log(`[FarmSuite][Transfer] ${currentAltName()} needs ${recDef}/${speedDef} (has ${altRecCount}/${altSpeedCount})`);
             if (liveRecCount >= recDef && liveSpeedCount >= speedDef) {
@@ -1921,8 +1909,8 @@
             if (Date.now() - tDropsSentAt < 250) return;
             if (altRecCount >= config.recWanted && altSpeedCount >= config.speedWanted) {
                 const ms = Date.now() - r2StartTime;
-                const m  = Math.floor(ms / 60000);
-                const s  = Math.floor((ms % 60000) / 1000);
+                const m = Math.floor(ms / 60000);
+                const s = Math.floor((ms % 60000) / 1000);
                 console.log(`%c[FarmSuite][Transfer] ${currentAltName()} CONFIRMED at ${altRecCount}/${altSpeedCount} — done in ${m}m ${s}s`, 'color:#7fffa1;font-weight:bold');
                 cyclesCompleted++;
                 tAdvance(true);
@@ -1939,7 +1927,7 @@
         if (hasEnough && !tR2WasReady) {
             tR2WasReady = true;
             console.log(`%c[FarmSuite][R2] READY — main has ${liveRecCount}/${liveSpeedCount}`, 'color:#7fffa1');
-            try { bcSend({ type: 'r2_ready', rec: liveRecCount, speed: liveSpeedCount }); } catch (_) {}
+            try { bcSend({ type: 'r2_ready', rec: liveRecCount, speed: liveSpeedCount }); } catch (_) { }
         } else if (!hasEnough && tR2WasReady) {
             tR2WasReady = false;
         }
@@ -1966,7 +1954,7 @@
 
         // (B) WAITING_FOR_R2 → wake up if main now has the deficit covered
         if (tState === T_STATE.WAITING_FOR_R2) {
-            const recDef   = config.recWanted   - altRecCount;
+            const recDef = config.recWanted - altRecCount;
             const speedDef = config.speedWanted - altSpeedCount;
             if (liveRecCount >= recDef && liveSpeedCount >= speedDef) {
                 console.log(`%c[FarmSuite][Transfer] R2 has ${liveRecCount}/${liveSpeedCount} ≥ deficit ${recDef}/${speedDef} — spawning ${currentAltName()}`, 'color:#7fffa1;font-weight:bold');
@@ -2029,9 +2017,9 @@
             return;
         }
         // Got coords. Compute deficit and clamp to what main actually has.
-        const recDef   = Math.max(0, config.recWanted   - altRecCount);
+        const recDef = Math.max(0, config.recWanted - altRecCount);
         const speedDef = Math.max(0, config.speedWanted - altSpeedCount);
-        const recDrop   = Math.min(recDef,   liveRecCount);
+        const recDrop = Math.min(recDef, liveRecCount);
         const speedDrop = Math.min(speedDef, liveSpeedCount);
         if (recDrop === 0 && speedDrop === 0) {
             console.warn(`[FarmSuite][Transfer] Drop math zero (def=${recDef}/${speedDef}, main=${liveRecCount}/${liveSpeedCount}) — failing`);
@@ -2039,7 +2027,7 @@
             return;
         }
         tDropCoords = coords;
-        try { bcSend({ type: 'alt_spawned', x: coords.x, y: coords.y, alt: currentAltName() }); } catch (_) {}
+        try { bcSend({ type: 'alt_spawned', x: coords.x, y: coords.y, alt: currentAltName() }); } catch (_) { }
         console.log(`[FarmSuite][Transfer] Got alt coords (${coords.x}, ${coords.y}) — dropping ${recDrop}/${speedDrop}`);
         // Fire drops, then ONLY transition to WAITING_DROP_CONFIRM on success. If the
         // drop burst can't run (no mainWs / link laggy), tOnFailure cleanly routes us
@@ -2068,7 +2056,7 @@
         dropPowerPacket.setInt32(1, x, true);
         dropPowerPacket.setInt32(5, y, true);
         dropPowerPacket.setUint8(9, 1, true);                                 // recombine
-        for (let i = 0; i < recCount;   i++) nativeSend.call(mainWs, dropPowerPacket);
+        for (let i = 0; i < recCount; i++) nativeSend.call(mainWs, dropPowerPacket);
         dropPowerPacket.setUint8(9, 2, true);                                 // speed
         for (let i = 0; i < speedCount; i++) nativeSend.call(mainWs, dropPowerPacket);
         return true;
@@ -2076,7 +2064,7 @@
 
     function tDoLogout() {
         tSetState(T_STATE.LOGGING_OUT);
-        try { nativeSend.call(altWs, logoutPacket); } catch (_) {}
+        try { nativeSend.call(altWs, logoutPacket); } catch (_) { }
         tClearTimers();
         if (tPaused) {
             // Chain is paused (too many consecutive alt failures). Don't schedule
@@ -2093,7 +2081,7 @@
         tNextLoginTimerId = setTimeout(() => {
             tNextLoginTimerId = null;
             if (!enabled || role !== ROLES.AUTO_R2) { tSetState(T_STATE.IDLE); return; }
-            if (!altWindow || altWindow.closed)      { tSetState(T_STATE.IDLE); return; }
+            if (!altWindow || altWindow.closed) { tSetState(T_STATE.IDLE); return; }
             sendAltLogin();
         }, 1000);
     }
@@ -2144,9 +2132,9 @@
             r2Phase = 'CYCLING';
             cycleAbort = false;
             // Clear any prior chain-paused state from a previous session
-            tPaused           = false;
+            tPaused = false;
             tConsecutiveFails = 0;
-            tAttempts         = 0;
+            tAttempts = 0;
             const altOpen = altWindow && !altWindow.closed;
             console.log(`%c[FarmSuite] R2 ON — server=${mainWs.url} portalMode=${portalMode || 'unknown'} altTab=${altOpen ? 'open' : 'closed'}`, 'color:#7fc7ff;font-weight:bold');
             if (portalMode === Modes.R1) {
@@ -2169,22 +2157,22 @@
             // Clean up the transfer state machine
             tClearTimers();
             if (tState !== T_STATE.IDLE && altWs) {
-                try { nativeSend.call(altWs, logoutPacket); } catch (_) {}
+                try { nativeSend.call(altWs, logoutPacket); } catch (_) { }
             }
-            tState            = T_STATE.IDLE;
-            tStateEnteredAt   = Date.now();
-            tAttempts         = 0;
-            tDropsSentAt      = 0;
-            tDropCoords       = null;
-            tSpawnRetryCount  = 0;
-            tR2WasReady       = false;
+            tState = T_STATE.IDLE;
+            tStateEnteredAt = Date.now();
+            tAttempts = 0;
+            tDropsSentAt = 0;
+            tDropCoords = null;
+            tSpawnRetryCount = 0;
+            tR2WasReady = false;
             tConsecutiveFails = 0;
-            tPaused           = false;
+            tPaused = false;
 
             // Reset transfer-related alt state
             altCountsReceived = false;
-            altRecCount       = 0;
-            altSpeedCount     = 0;
+            altRecCount = 0;
+            altSpeedCount = 0;
 
             r2Phase = 'OFF';
         }
@@ -2236,23 +2224,23 @@
                 bcSend({ type: 'xp_dead' });
                 console.log('[FarmSuite] XP died — broadcasting xp_dead');
             }
-            xpHadCells    = false;
+            xpHadCells = false;
             xpCurrentMass = 0;
-            xpCurrentPos  = null;
+            xpCurrentPos = null;
             // stay in same phase — autoRespawnTick will respawn us; positioning
             // logic resumes on the next tick that sees cells again.
             return;
         }
         const justSpawned = !xpHadCells;
-        xpHadCells    = true;
+        xpHadCells = true;
         xpCurrentMass = Math.round(totalMass);
-        xpCurrentPos  = { x: Math.round(x / n), y: Math.round(y / n) };
+        xpCurrentPos = { x: Math.round(x / n), y: Math.round(y / n) };
 
         // Just (re)spawned and bot is on — kick off positioning
         if (justSpawned && (xpPhase === 'OFF' || xpPhase === 'POSITIONING' || xpPhase === 'READY')) {
             xpPhase = 'POSITIONING';
             if (isFrozen) {
-                try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) {}
+                try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) { }
             }
         }
 
@@ -2260,11 +2248,11 @@
             // aim toward target spot
             mousePacket.setInt32(1, config.xpTargetX, true);
             mousePacket.setInt32(5, config.xpTargetY, true);
-            try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) {}
+            try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) { }
             const dist = Math.hypot(xpCurrentPos.x - config.xpTargetX, xpCurrentPos.y - config.xpTargetY);
             if (dist < 1000) {
                 xpPhase = 'READY';
-                try { nativeSend.call(mainWs, freezePacket); isFrozen = true; } catch (_) {}
+                try { nativeSend.call(mainWs, freezePacket); isFrozen = true; } catch (_) { }
                 console.log(`[FarmSuite] XP positioned at (${xpCurrentPos.x}, ${xpCurrentPos.y}) — frozen, broadcasting for feeder`);
             }
             updateUI();
@@ -2274,8 +2262,8 @@
         if (xpPhase === 'READY') {
             bcSend({
                 type: 'xp_active',
-                x:    xpCurrentPos.x,
-                y:    xpCurrentPos.y,
+                x: xpCurrentPos.x,
+                y: xpCurrentPos.y,
                 mass: xpCurrentMass,
             });
             if (xpCurrentMass >= config.xpTargetMass) {
@@ -2297,34 +2285,34 @@
         console.log(`%c[FarmSuite] XP target mass reached (${xpCurrentMass}) — starting dispersion`, 'color:#7fffa1;font-weight:bold');
 
         // 1. Unfreeze so the cell can move
-        try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) {}
+        try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) { }
 
         // 2. Aim at the far right edge at current Y, so the split chunks all fly right
         mousePacket.setInt32(1, 14000, true);
         mousePacket.setInt32(5, Math.round(startY), true);
-        try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) {}
+        try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) { }
 
         // 3. Full split — 4 presses turns 1 cell into 16, all aimed right.
         //    120 ms between presses lets each split's recharge clear.
         for (let i = 0; i < 4; i++) {
             await wait(0.12);
-            try { nativeSend.call(mainWs, splitPacket); } catch (_) {}
+            try { nativeSend.call(mainWs, splitPacket); } catch (_) { }
         }
 
         // 4. Let the cells spread out into a line
         await wait(1);
 
         // 5. Pick whichever vertical direction has more room from the current Y
-        const myY      = (xpCurrentPos && xpCurrentPos.y) || startY;
-        const distUp   = myY;
+        const myY = (xpCurrentPos && xpCurrentPos.y) || startY;
+        const distUp = myY;
         const distDown = config.xpMapHeight - myY;
-        const targetY  = distUp > distDown ? 0 : config.xpMapHeight;
+        const targetY = distUp > distDown ? 0 : config.xpMapHeight;
         console.log(`[FarmSuite] XP at Y=${myY} → distUp=${distUp} distDown=${distDown} → going to Y=${targetY}`);
 
         // 6. Aim at (right edge, chosen Y) so the cell-line travels that way
         mousePacket.setInt32(1, 14000, true);
         mousePacket.setInt32(5, targetY, true);
-        try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) {}
+        try { nativeSend.call(mainWs, mousePacket.buffer); } catch (_) { }
 
         xpPhase = 'DONE';
         bcSend({ type: 'xp_done' });
@@ -2333,9 +2321,9 @@
 
     function xpToggle(on) {
         if (on) {
-            enabled        = true;
-            xpPhase        = 'POSITIONING';
-            xpHadCells     = false;
+            enabled = true;
+            xpPhase = 'POSITIONING';
+            xpHadCells = false;
             if (xpBroadcastInterval) clearInterval(xpBroadcastInterval);
             xpBroadcastInterval = setInterval(xpTick, 300);
             xpTick();                                  // fire once immediately so feeder hears us asap
@@ -2345,7 +2333,7 @@
             if (xpBroadcastInterval) { clearInterval(xpBroadcastInterval); xpBroadcastInterval = null; }
             bcSend({ type: 'xp_done' });
             if (isFrozen) {
-                try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) {}
+                try { nativeSend.call(mainWs, freezePacket); isFrozen = false; } catch (_) { }
             }
             xpPhase = 'OFF';
         }
@@ -2804,11 +2792,11 @@
         const stopWheel = e => { e.stopPropagation(); };
         const menuRoot = document.querySelector('.fs-menu');
         if (menuRoot) {
-            menuRoot.addEventListener('keydown',    stopFromUiField, true);
-            menuRoot.addEventListener('keyup',      stopFromUiField, true);
-            menuRoot.addEventListener('keypress',   stopFromUiField, true);
-            menuRoot.addEventListener('wheel',      stopWheel,       true);
-            menuRoot.addEventListener('mousewheel', stopWheel,       true);
+            menuRoot.addEventListener('keydown', stopFromUiField, true);
+            menuRoot.addEventListener('keyup', stopFromUiField, true);
+            menuRoot.addEventListener('keypress', stopFromUiField, true);
+            menuRoot.addEventListener('wheel', stopWheel, true);
+            menuRoot.addEventListener('mousewheel', stopWheel, true);
         }
 
         // open / close / tab switching
@@ -2818,7 +2806,7 @@
             // first time someone opens the panel — ask for desktop notification permission
             // (we use a user gesture so the browser actually prompts)
             if ('Notification' in window && Notification.permission === 'default') {
-                Notification.requestPermission().catch(() => {});
+                Notification.requestPermission().catch(() => { });
             }
         });
         document.getElementById('fs-close').addEventListener('click', () => {
@@ -2921,12 +2909,12 @@
                 }
             });
         };
-        bind('fs-r2-prefix',   'altPrefix');
+        bind('fs-r2-prefix', 'altPrefix');
         bind('fs-r2-password', 'altPassword');
-        bind('fs-r2-current',  'altCurrent',  v => parseInt(v));
-        bind('fs-r2-rec',      'recWanted',   v => parseInt(v));
-        bind('fs-r2-speed',    'speedWanted', v => parseInt(v));
-        bind('fs-r2-key',      'r2Key',       v => (v || '').slice(0,3));
+        bind('fs-r2-current', 'altCurrent', v => parseInt(v));
+        bind('fs-r2-rec', 'recWanted', v => parseInt(v));
+        bind('fs-r2-speed', 'speedWanted', v => parseInt(v));
+        bind('fs-r2-key', 'r2Key', v => (v || '').slice(0, 3));
 
         document.getElementById('fs-r2-open-alt').addEventListener('click', () => {
             const ok = ensureAltWindow();
@@ -2941,7 +2929,7 @@
 
         // xp inputs
         bind('fs-xp-mass', 'xpTargetMass', v => parseInt(v));
-        bind('fs-xp-key',  'xpKey',        v => (v || '').slice(0,3));
+        bind('fs-xp-key', 'xpKey', v => (v || '').slice(0, 3));
         document.getElementById('fs-xp-toggle').addEventListener('click', () => {
             alert("This feature isn't ready yet");
         });
@@ -2953,11 +2941,11 @@
         if (!uiBuilt) return;
 
         // role tab status
-        const socketEl  = document.getElementById('fs-st-socket');
+        const socketEl = document.getElementById('fs-st-socket');
         const enabledEl = document.getElementById('fs-st-enabled');
-        const portalEl  = document.getElementById('fs-st-portal');
-        const hotkeyEl  = document.getElementById('fs-st-hotkey');
-        const serverEl  = document.getElementById('fs-st-server');
+        const portalEl = document.getElementById('fs-st-portal');
+        const hotkeyEl = document.getElementById('fs-st-hotkey');
+        const serverEl = document.getElementById('fs-st-server');
         if (socketEl) {
             socketEl.textContent = mainWs ? 'connected' : 'disconnected';
             socketEl.style.color = mainWs ? '#b9ffcf' : '#ffb4b4';
@@ -2969,7 +2957,7 @@
             // unreachable or not yet set. Append the server-type tag so the user
             // can see at a glance which split-cycle logic is active.
             let name = '';
-            try { name = unsafeWindow.currentServerName || ''; } catch (_) {}
+            try { name = unsafeWindow.currentServerName || ''; } catch (_) { }
             if (!name && mainWs && typeof mainWs.url === 'string') {
                 const m = mainWs.url.match(/s(\d+)\.agma\.io/);
                 if (m) name = `s${m[1]}`;
@@ -2977,11 +2965,11 @@
             let display = name || '—';
             if (mainWs) {
                 const type = getServerType();
-                if      (type === 'instant')  display += ' (instant)';
+                if (type === 'instant') display += ' (instant)';
                 else if (type === 'xy_insta') display += ' (XY-Insta)';
-                else if (type === 'crazy')    display += ' (crazy)';
+                else if (type === 'crazy') display += ' (crazy)';
                 else if (type === 'gigantic') display += ' (gigantic)';
-                else if (name)                display += ' (unsupported)';
+                else if (name) display += ' (unsupported)';
                 // Disable the Auto R2 option in the role dropdown on Gigantic
                 // family — only Block Feeder + XP Bot are available there.
                 const r2Opt = document.querySelector('#fs-role option[value="' + ROLES.AUTO_R2 + '"]');
@@ -3007,9 +2995,9 @@
             portalEl.textContent = portalMode === Modes.R1 ? 'R1' : portalMode === Modes.R2 ? 'R2' : '—';
         if (hotkeyEl) {
             const k = role === ROLES.FEEDER ? config.feederKey
-                    : role === ROLES.AUTO_R2 ? config.r2Key
+                : role === ROLES.AUTO_R2 ? config.r2Key
                     : role === ROLES.XP ? config.xpKey
-                    : '—';
+                        : '—';
             hotkeyEl.textContent = k;
         }
 
@@ -3022,11 +3010,11 @@
             }
             fSt.textContent = phaseText;
             fSt.style.color = !enabled || role !== ROLES.FEEDER ? '#7c97b8'
-                            : feederPhase === 'FEEDING' ? '#b9ffcf'
-                            : feederPhase === 'CLUSTER' ? '#ffd700'
-                            : feederPhase === 'VIRUS' ? '#7fc7ff'
+                : feederPhase === 'FEEDING' ? '#b9ffcf'
+                    : feederPhase === 'CLUSTER' ? '#ffd700'
+                        : feederPhase === 'VIRUS' ? '#7fc7ff'
                             : feederPhase === 'XP_BOOST' ? '#ffd47a'
-                            : '#eaf4ff';
+                                : '#eaf4ff';
         }
         const fBl = document.getElementById('fs-feeder-blocks');
         if (fBl) {
@@ -3061,15 +3049,15 @@
                 : '(inactive)';
             r2Ph.textContent = txt;
             r2Ph.style.color = !enabled || role !== ROLES.AUTO_R2 ? '#7c97b8'
-                             : tPaused                            ? '#ff8888'
-                             : tState === T_STATE.WAITING_FOR_R2  ? '#ffd47a'
-                             : tState === T_STATE.WAITING_DROP_CONFIRM ? '#b9ffcf'
-                             : r2Phase === 'CYCLING'      ? '#7fc7ff'
-                             : r2Phase === 'TRAVELING'    ? '#7fc7ff'
-                             : r2Phase === 'STAYING'      ? '#b9ffcf'
-                             : r2Phase === 'WAIT_PELLETS' ? '#ffd47a'
-                             : r2Phase === 'EATING'       ? '#b9ffcf'
-                             : '#eaf4ff';
+                : tPaused ? '#ff8888'
+                    : tState === T_STATE.WAITING_FOR_R2 ? '#ffd47a'
+                        : tState === T_STATE.WAITING_DROP_CONFIRM ? '#b9ffcf'
+                            : r2Phase === 'CYCLING' ? '#7fc7ff'
+                                : r2Phase === 'TRAVELING' ? '#7fc7ff'
+                                    : r2Phase === 'STAYING' ? '#b9ffcf'
+                                        : r2Phase === 'WAIT_PELLETS' ? '#ffd47a'
+                                            : r2Phase === 'EATING' ? '#b9ffcf'
+                                                : '#eaf4ff';
         }
         const r2Lv = document.getElementById('fs-r2-live');
         if (r2Lv) r2Lv.textContent = `${liveRecCount} / ${liveSpeedCount}`;
@@ -3096,9 +3084,9 @@
         if (xPh) {
             xPh.textContent = role === ROLES.XP ? (enabled ? xpPhase : 'OFF') : '(inactive)';
             xPh.style.color = !enabled || role !== ROLES.XP ? '#7c97b8'
-                            : xpPhase === 'ACTIVE' ? '#7fc7ff'
-                            : xpPhase === 'DONE' ? '#b9ffcf'
-                            : '#eaf4ff';
+                : xpPhase === 'ACTIVE' ? '#7fc7ff'
+                    : xpPhase === 'DONE' ? '#b9ffcf'
+                        : '#eaf4ff';
         }
         const xMa = document.getElementById('fs-xp-curmass');
         if (xMa) xMa.textContent = xpCurrentMass;
@@ -3118,7 +3106,7 @@
                 && role === ROLES.AUTO_R2
                 && tState === T_STATE.IDLE
                 && !altOpen
-                && liveRecCount   >= config.recWanted
+                && liveRecCount >= config.recWanted
                 && liveSpeedCount >= config.speedWanted;
             if (readyToTransfer) {
                 badge.textContent = 'READY — OPEN ALT TAB';
@@ -3132,7 +3120,7 @@
                 }
             } else {
                 const label = role === ROLES.NONE ? 'NO ROLE'
-                            : `${ROLE_LABELS[role]}: ${enabled ? 'ON' : 'OFF'}`;
+                    : `${ROLE_LABELS[role]}: ${enabled ? 'ON' : 'OFF'}`;
                 badge.textContent = label;
                 badge.classList.remove('fs-status-badge--ready');
                 badge.classList.toggle('fs-status-badge--on', enabled);
@@ -3146,9 +3134,9 @@
     // ROLE TOGGLE DISPATCH
     // ===========================================================================
     function toggleActiveRole(on) {
-        if (role === ROLES.FEEDER)  feederToggle(on);
+        if (role === ROLES.FEEDER) feederToggle(on);
         else if (role === ROLES.AUTO_R2) r2Toggle(on);
-        else if (role === ROLES.XP)      xpToggle(on);
+        else if (role === ROLES.XP) xpToggle(on);
         else { /* no role selected */ }
     }
 
@@ -3164,9 +3152,9 @@
     unsafeWindow.addEventListener('keyup', e => {
         if (isTypingFocus()) return;
         const k = (e.key || '').toLowerCase();
-        if (role === ROLES.FEEDER  && k === config.feederKey.toLowerCase()) toggleActiveRole(!enabled);
+        if (role === ROLES.FEEDER && k === config.feederKey.toLowerCase()) toggleActiveRole(!enabled);
         else if (role === ROLES.AUTO_R2 && k === config.r2Key.toLowerCase()) toggleActiveRole(!enabled);
-        else if (role === ROLES.XP      && k === config.xpKey.toLowerCase()) toggleActiveRole(!enabled);
+        else if (role === ROLES.XP && k === config.xpKey.toLowerCase()) toggleActiveRole(!enabled);
     });
 
     // ===========================================================================
