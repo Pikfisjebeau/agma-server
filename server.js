@@ -271,13 +271,10 @@ app.get('/script', (req, res) => {
     const scriptCode = fs.readFileSync(SCRIPT_FILE, 'utf8');
     const morphed    = morphScript(scriptCode);
 
-    // Encrypt with the user's fingerprint as the key
-    // Cached code in GM storage is AES-encrypted — useless without the fingerprint
-    const encrypted = fp ? encryptScript(morphed, fp) : { iv: '', data: Buffer.from(morphed).toString('base64') };
-
-    res.setHeader('Content-Type', 'application/json');
+    // Return morphed plain text — loader handles local storage encryption
+    res.setHeader('Content-Type', 'text/javascript');
     res.setHeader('X-Time-Left', formatTimeLeft(result.timeLeft));
-    res.json({ iv: encrypted.iv, data: encrypted.data, timeLeft: formatTimeLeft(result.timeLeft) });
+    res.send(morphed);
 });
 
 // ── Public: check key only ─────────────────────────────────────────────────────
